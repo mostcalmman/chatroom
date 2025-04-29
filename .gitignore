@@ -1,0 +1,11 @@
+# 编译输出
+build/
+*.o
+*.exe
+
+# VSCode 配置
+.vscode/
+
+# 临时文件
+*~
+*.sw?
