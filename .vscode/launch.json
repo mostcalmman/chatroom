@@ -1,0 +1,23 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug Server",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/server",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "build-server"
+        },
+        {
+            "name": "Debug Client",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/client",
+            "args": ["127.0.0.1"],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "build-client"
+        }
+    ]
+}
