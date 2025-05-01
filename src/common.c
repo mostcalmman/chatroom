@@ -1,5 +1,4 @@
 #include "common.h"
-#include <string.h>
 
 // 向所有在线客户端广播消息
 void broadcast_message(server_ctx_t *ctx, const char *msg) {

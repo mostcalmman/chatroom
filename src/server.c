@@ -2,7 +2,6 @@
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 
 static server_ctx_t ctx = {
@@ -66,10 +65,8 @@ void *handle_client(void *arg) {
 
     }
 
-    
-
     // 广播加入消息
-    snprintf(announce, sizeof announce, "%s 加入了聊天室\n", client->name);
+    snprintf(announce, sizeof announce, "%s 加入了聊天室, 当前用户数: %d\n", client->name, num);
     broadcast_message(&ctx, announce);
 
     // 消息循环
@@ -84,13 +81,13 @@ void *handle_client(void *arg) {
 
     // 注销并广播退出
     unregister_client(&ctx, client);
-    snprintf(announce, sizeof announce, "%s 离开了聊天室\n", client->name);
+    num--;
+    snprintf(announce, sizeof announce, "%s 离开了聊天室, 当前用户数: %d\n", client->name, num);
     broadcast_message(&ctx, announce);
-
+    printf("[LOG] 用户“%s”已退出, fd=%d, 当前用户数: %d\n", client->name, client->sockfd, num);
     close(client->sockfd);
     free(client);
-    num--;
-    printf("[LOG] 用户“%s”已退出, fd=%d, 当前用户数: %d\n", client->name, client->sockfd, num);
+    
     return NULL;
 }
 

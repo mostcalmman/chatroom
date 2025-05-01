@@ -1,4 +1,5 @@
 #include <pthread.h>
+#include <string.h>
 #include <sys/socket.h>
 #define MAX_NAME_LEN 33
 #define MAX_CLIENTS 100
