@@ -45,6 +45,15 @@ int main(int argc, char *argv[]) {
 
     // 发送/接收循环（阻塞）
     while (1) {
+        // 接收服务器回复
+        ssize_t n = recv(sockfd, buf, MAX_MSG_LEN - 1, 0);
+        if (n <= 0) {
+            printf("服务器已断开\n");
+            break;
+        }
+        buf[n] = '\0';
+        printf("服务器消息: %s", buf);
+        
         // 从 stdin 读取一行
         if (!fgets(buf, MAX_MSG_LEN, stdin)) {
             break;
@@ -61,14 +70,7 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        // 接收服务器回复
-        ssize_t n = recv(sockfd, buf, MAX_MSG_LEN - 1, 0);
-        if (n <= 0) {
-            printf("服务器已断开\n");
-            break;
-        }
-        buf[n] = '\0';
-        printf("服务器回复：%s\n", buf);
+        
     }
 
     close(sockfd);
