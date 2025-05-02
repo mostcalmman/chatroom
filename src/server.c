@@ -4,6 +4,12 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+// 文件信息
+file_info_t files[MAX_FILES];
+pthread_mutex_t file_lock = PTHREAD_MUTEX_INITIALIZER;
+int file_count = 0;
+
+// 服务器上下文
 static server_ctx_t ctx = {
     .clients = { NULL },
     .count   = 0,
@@ -18,7 +24,7 @@ static void *stdin_monitor(void *arg) {
     char line[64];
     while (fgets(line, sizeof(line), stdin)) {
         line[strcspn(line, "\r\n")] = '\0';
-        if (strcmp(line, "//close") == 0) {
+        if (strcmp(line, CLOSE_CMD) == 0) {
             if (num == 0) {
                 printf("[LOG] 收到 //close 命令且无人在线，正在关闭服务器...\n");
                 server_running = 0;
@@ -26,7 +32,7 @@ static void *stdin_monitor(void *arg) {
                 close(listen_fd);
                 break;
             } else {
-                printf("[LOG] 收到 //close, 但当前在线 %d 人，拒绝关闭\n", num);
+                printf("[LOG] 收到 //close, 但当前在线 %d 人，请等待所有用户退出后再关闭\n", num);
             }
         }
     }
@@ -96,6 +102,45 @@ void *handle_client(void *arg) {
         memset(buf, 0, sizeof buf);
         ssize_t n = recv(client->sockfd, buf, MAX_MSG_LEN - 1, 0);
         if (n <= 0 || strcmp(buf, EXIT_CMD) == 0) break;
+
+        //文件处理
+        if (strncmp(buf, "[FILE]", 6) == 0) {
+            char filename[128];
+            long filesize;
+            sscanf(buf + 6, "%127[^|]|%ld", filename, &filesize);
+        
+            char filepath[256];
+            pthread_mutex_lock(&file_lock);
+            int fid = file_count++;
+            snprintf(filepath, sizeof(filepath), "files/%d_%s", fid, filename);
+            pthread_mutex_unlock(&file_lock);
+        
+            FILE *fp = fopen(filepath, "wb");
+            long received = 0;
+            char filebuf[1024];
+            ssize_t r;
+        
+            while (received < filesize && (r = recv(client->sockfd, filebuf, sizeof(filebuf), 0)) > 0) {
+                fwrite(filebuf, 1, r, fp);
+                received += r;
+            }
+            fclose(fp);
+        
+            pthread_mutex_lock(&file_lock);
+            files[fid].fileid = fid;
+            strcpy(files[fid].filename, filename);
+            strcpy(files[fid].sender, client->name);
+            strcpy(files[fid].filepath, filepath);
+            pthread_mutex_unlock(&file_lock);
+        
+            char announce[256];
+            snprintf(announce, sizeof(announce), "%s[FILE]%s %d\n", client->name, filename, fid);
+            broadcast_message(&ctx, announce);
+        
+            printf("[LOG] 已保存文件: %s, 来自用户: %s, 文件编号: %d\n", filename, client->name, fid);
+        }
+        
+        
         printf("[LOG] 来自用户 %s, fd=%d: %s\n",
                client->name, client->sockfd, buf);
         snprintf(announce, sizeof announce, "%s: %s\n", client->name, buf);
@@ -142,7 +187,7 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    printf("聊天室服务器已启动，监听端口 %d(输入 //close 回车关闭)\n",
+    printf("聊天室服务器已启动，监听端口 %d \n",
            SERVER_PORT);
 
     // 启动 stdin 监控线程
