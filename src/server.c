@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <sys/stat.h>
 
 // 文件信息
 file_info_t files[MAX_FILES];
@@ -19,6 +21,26 @@ static server_ctx_t ctx = {
 int num = 0; // 直接维护一个在线人数计数, 避免频繁访问服务器上下文导致锁定与解锁
 static int listen_fd;
 static int server_running = 1; // 控制主循环，0 时退出
+
+/* ---------- 清空文件目录 ---------- */
+static void purge_dir(const char *dir)
+{
+    DIR *d = opendir(dir);
+    if (!d) return; // 目录不存在或权限不足
+
+    struct dirent *ent;
+    char path[512];
+
+    while ((ent = readdir(d)) != NULL) {
+        if (strcmp(ent->d_name, ".")  == 0 ||
+            strcmp(ent->d_name, "..") == 0)
+            continue;
+
+        snprintf(path, sizeof(path), "%s/%s", dir, ent->d_name);
+        unlink(path);
+    }
+    closedir(d);
+}
 
 /* ---------- stdin 监控线程 ---------- */
 static void *stdin_monitor(void *arg) {
@@ -232,11 +254,25 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    // 确保 server_files/ 存在
-    if (ensure_dir(FILES_DIR) != 0) {
-        perror("mkdir files");
-        exit(EXIT_FAILURE);
+    // // 确保 server_files/ 存在
+    // if (ensure_dir(FILES_DIR) != 0) {
+    //     perror("mkdir files");
+    //     exit(EXIT_FAILURE);
+    // }
+
+    /* ----------- 文件目录准备 ----------- */
+    struct stat st;
+    if (stat(FILES_DIR, &st) == 0 && S_ISDIR(st.st_mode)) {
+        // 目录已存在, 清空旧文件
+        purge_dir(FILES_DIR);
+    } else {
+        // 目录不存在, 创建
+        if (ensure_dir(FILES_DIR) != 0) {
+            perror("mkdir files");
+            exit(EXIT_FAILURE);
+        }
     }
+
 
     printf("聊天室服务器已启动，监听端口 %d \n", SERVER_PORT);
 
