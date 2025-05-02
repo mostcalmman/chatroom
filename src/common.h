@@ -21,7 +21,8 @@ typedef struct {
     pthread_mutex_t lock;
 } server_ctx_t;
 
-// 注册、注销客户端接口
+// 注册, 注销用户
 int  register_client(server_ctx_t *ctx, client_t *c);
 void unregister_client(server_ctx_t *ctx, client_t *c);
+// 消息广播
 void broadcast_message(server_ctx_t *ctx, const char *msg);

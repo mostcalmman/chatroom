@@ -9,7 +9,7 @@ static server_ctx_t ctx = {
     .count   = 0,
     .lock    = PTHREAD_MUTEX_INITIALIZER // 静态初始化互斥锁
 };
-int num = 0;            // 在线人数计数
+int num = 0;            // 直接维护一个在线人数计数, 避免频繁访问服务器上下文导致锁定与解锁
 static int listen_fd;
 static int server_running = 1; // 控制主循环，0 时退出
 
@@ -120,7 +120,7 @@ int main() {
     int conn_fd;
     struct sockaddr_in serv_addr;
 
-    // socket 初始化
+    // socket 初始化三件套
     if ((listen_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("socket");
         exit(EXIT_FAILURE);

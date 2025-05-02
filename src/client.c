@@ -4,9 +4,9 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-static int sockfd;  // 全局，以便在 send 线程结束后关闭
+static int sockfd;  // 全局, 以便在 send 线程结束后关闭
 
-// 发送线程：读取 stdin，每行发送到服务器
+// 发送线程: 读取 stdin, 每行发送到服务器
 void *send_handler(void *arg) {
     char buf[MAX_MSG_LEN];
     while (fgets(buf, sizeof(buf), stdin)) {
@@ -24,7 +24,7 @@ void *send_handler(void *arg) {
     return NULL;
 }
 
-// 接收线程：不断从服务器 recv 并打印
+// 接收线程: 不断从服务器 recv 并打印
 void *recv_handler(void *arg) {
     char buf[MAX_MSG_LEN + MAX_NAME_LEN + 32];
     ssize_t n;
