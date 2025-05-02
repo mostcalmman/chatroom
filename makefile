@@ -1,11 +1,15 @@
 compile_all: src/*
-	gcc -pthread -o build/client src/client.c src/common.c
-	gcc -pthread -o build/server src/server.c src/common.c
+	gcc -lpthread -o build/client src/client.c src/common.c
+	gcc -lpthread -o build/server src/server.c src/common.c
 
 server: src/*
-	gcc -pthread -o build/server src/server.c src/common.c
+	gcc -lpthread -o build/server src/server.c src/common.c
 
 client: src/*
-	gcc -pthread -o build/client src/client.c src/common.c
+	gcc -lpthread -o build/client src/client.c src/common.c
+
+clean:
+	rm -rf build/downloads
+	rm -rf build/server_files
 
 all: compile_all

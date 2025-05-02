@@ -6,23 +6,23 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-static const char *DL_DIR = "downloads";   /* 本地下载目录 */
-static int sockfd;  // 全局, 以便在 send 线程结束后关闭
+static const char *DL_DIR = "downloads"; // 本地文件保存目录
+static int sockfd;
 
-// 发送线程: 读取 stdin, 每行发送到服务器
+/* ---------- 发送线程 ---------- */
 void *send_handler(void *arg) {
     char buf[MAX_MSG_LEN];
     while (fgets(buf, sizeof(buf), stdin)) {
-        buf[strcspn(buf, "\r\n")] = '\0';  // 去除换行
+        buf[strcspn(buf, "\r\n")] = '\0'; // 去除换行
         /* ---------- 处理 //sendfile ---------- */
         if (strncmp(buf, SEND_FILE_CMD, strlen(SEND_FILE_CMD)) == 0) {
-            char *path = buf + strlen(SEND_FILE_CMD) + 1;   /* 跳过空格 */
+            char *path = buf + strlen(SEND_FILE_CMD); // 获取文件路径
             FILE *fp = fopen(path, "rb");
             if (!fp) {
                 fprintf(stderr, "无法打开文件 %s\n", path);
                 continue;
             }
-            /* 获取纯文件名 */
+            // 获取纯文件名
             char *filename = strrchr(path, '/');
             filename = filename ? filename + 1 : path;
 
@@ -30,7 +30,7 @@ void *send_handler(void *arg) {
             long fsize = ftell(fp);
             rewind(fp);
 
-            /* 1) 发送文件头 */
+            // 发送文件头
             char header[256];
             snprintf(header, sizeof(header), FILE_HDR"%s|%ld", filename, fsize);
             if (send(sockfd, header, strlen(header), 0) < 0) {
@@ -38,22 +38,24 @@ void *send_handler(void *arg) {
                 fclose(fp);
                 break;
             }
-            /* 2) 发送文件体 */
+            // 发送文件体
             char chunk[1024];
             size_t r;
             while ((r = fread(chunk, 1, sizeof(chunk), fp)) > 0)
                 send(sockfd, chunk, r, 0);
             fclose(fp);
             printf("已发送文件 %s (%ld 字节)\n", filename, fsize);
-            continue;                   /* 不再走默认 send 路径 */
+            continue; // 不再走默认 send 路径
         }
 
+        // 普通消息
         if (send(sockfd, buf, strlen(buf), 0) < 0) {
             perror("send");
             break;
         }
+
+        // 退出消息
         if (strcmp(buf, EXIT_CMD) == 0) {
-            // 向服务器通知“退出”，并中断读 recv
             shutdown(sockfd, SHUT_RDWR);
             break;
         }
@@ -61,7 +63,7 @@ void *send_handler(void *arg) {
     return NULL;
 }
 
-// 接收线程: 不断从服务器 recv 并打印
+/* ---------- 接收线程 ---------- */
 void *recv_handler(void *arg) {
     char buf[MAX_MSG_LEN + MAX_NAME_LEN + 32];
     ssize_t n;
@@ -69,37 +71,57 @@ void *recv_handler(void *arg) {
         buf[n] = '\0';
         /* ---------- 接收服务器回传的文件 ---------- */
         if (strncmp(buf, SENDFILE_HDR, strlen(SENDFILE_HDR)) == 0) {
+            /* 1) 解析头部 --------------------------------- */
             char filename[128];
             long fsize;
-            /* 头格式: [SENDFILE]filename|size\n */
-            sscanf(buf + strlen(SENDFILE_HDR), "%127[^|]|%ld", filename, &fsize);
 
-            /* 确保下载目录存在 */
+            /* 找到头部结尾的 \n，指向文件体起始位置 */
+            char *header_end = strchr(buf, '\n');
+            if (!header_end) continue;          // 防御：头部被截断
+            *header_end = '\0';                 // 临时截断便于 sscanf
+
+            sscanf(buf + strlen(SENDFILE_HDR),
+                   "%127[^|]|%ld", filename, &fsize);
+
+            char *body_ptr   = header_end + 1;  // 指向已到达的文件体
+            size_t in_buf    = n - (body_ptr - buf);  // 这包里已有的字节数
+
+            /* 2) 准备保存文件 ----------------------------- */
             ensure_dir(DL_DIR);
             char dlpath[256];
-            snprintf(dlpath, sizeof(dlpath), "%s/%s", DL_DIR, filename);
+            snprintf(dlpath, sizeof dlpath, "%s/%s", DL_DIR, filename);
             FILE *fp = fopen(dlpath, "wb");
             if (!fp) {
                 fprintf(stderr, "无法保存文件到 %s\n", dlpath);
-                /* 丢弃文件体 */
-                char drop[1024];
-                long dropped = 0;
+                /* 丢弃整个文件体 */
+                char drop[1024]; long dropped = 0;
                 while (dropped < fsize)
-                    dropped += recv(sockfd, drop, sizeof(drop), 0);
+                    dropped += recv(sockfd, drop, sizeof drop, 0);
                 continue;
             }
 
+            /* 3) 先写首包里已包含的文件体 ----------------- */
             long received = 0;
+            if (in_buf > 0) {
+                size_t first = (in_buf > fsize) ? fsize : in_buf;
+                fwrite(body_ptr, 1, first, fp);
+                received += first;
+            }
+
+            /* 4) 继续按需读取直至收到 fsize 字节 ------------ */
             char filebuf[1024];
             while (received < fsize) {
-                ssize_t r = recv(sockfd, filebuf, sizeof(filebuf), 0);
-                if (r <= 0) break;
-                fwrite(filebuf, 1, r, fp);
+                size_t need = (fsize - received) < sizeof filebuf
+                              ? (size_t)(fsize - received)
+                              : sizeof filebuf;
+                ssize_t r = recv(sockfd, filebuf, need, 0);
+                if (r <= 0) { perror("recv file"); break; }
+                fwrite(filebuf, 1, (size_t)r, fp);
                 received += r;
             }
             fclose(fp);
             printf("已保存文件 %s (%ld 字节)\n", dlpath, fsize);
-            continue;                   /* 文件处理完毕，等待下一条消息 */
+            continue;    // 文件处理完毕，回主循环
         }
 
         printf("%s", buf);
@@ -114,13 +136,12 @@ int main(int argc, char *argv[]) {
     }
 
     struct sockaddr_in serv_addr;
-    // 创建 socket
+    /* ---------- 初始化并连接 --------- */
     if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("socket");
         return EXIT_FAILURE;
     }
 
-    // 连接服务器
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family      = AF_INET;
     serv_addr.sin_port        = htons(SERVER_PORT);
@@ -136,7 +157,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    // 接收服务器的昵称提示并发送昵称
+    /* ---------- 昵称处理 ---------- */
     char prompt_buf[MAX_MSG_LEN];
     ssize_t n = recv(sockfd, prompt_buf, sizeof(prompt_buf)-1, 0);
     if (n <= 0) {

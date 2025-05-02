@@ -8,7 +8,7 @@
 file_info_t files[MAX_FILES];
 pthread_mutex_t file_lock = PTHREAD_MUTEX_INITIALIZER;
 int file_count = 0;
-static const char *FILES_DIR = "files"; // 所有上传文件统一保存处
+static const char *FILES_DIR = "server_files"; // 所有上传文件统一保存处
 
 // 服务器上下文
 static server_ctx_t ctx = {
@@ -20,7 +20,7 @@ int num = 0; // 直接维护一个在线人数计数, 避免频繁访问服务�
 static int listen_fd;
 static int server_running = 1; // 控制主循环，0 时退出
 
-// stdin 监控线程
+/* ---------- stdin 监控线程 ---------- */
 static void *stdin_monitor(void *arg) {
     char line[64];
     while (fgets(line, sizeof(line), stdin)) {
@@ -40,6 +40,7 @@ static void *stdin_monitor(void *arg) {
     return NULL;
 }
 
+/* ---------- 用户处理线程 ---------- */
 void *handle_client(void *arg) {
     client_t *client = (client_t *)arg;
     char buf[MAX_MSG_LEN];
@@ -47,8 +48,9 @@ void *handle_client(void *arg) {
     char name_buf[MAX_NAME_LEN + 2];
     int reg;
     const char *prompt = "请输入昵称(不超过32字符): \n";
-    send(client->sockfd, prompt, strlen(prompt), 0);
+    send(client->sockfd, prompt, strlen(prompt), 0); // 发送提示
 
+    /* ---------- 昵称处理与注册 ---------- */
     while (1) {
         // 读取昵称并注册
         ssize_t n = recv(client->sockfd, name_buf, sizeof(name_buf)-1, 0);
@@ -98,44 +100,56 @@ void *handle_client(void *arg) {
              "%s 加入了聊天室, 当前用户数: %d\n", client->name, num);
     broadcast_message(&ctx, announce);
 
-    // 消息循环
+    /* ---------- 主循环：文件与消息 ---------- */
     while (1) {
         memset(buf, 0, sizeof buf);
         ssize_t n = recv(client->sockfd, buf, MAX_MSG_LEN - 1, 0);
         if (n <= 0 || strcmp(buf, EXIT_CMD) == 0) break;
 
-        /* ---------- 客户端请求保存文件 ---------- */
+        /* ---------- 保存文件请求 ---------- */
         if (strncmp(buf, SAVE_FILE_CMD, strlen(SAVE_FILE_CMD)) == 0) {
-            int req_id = atoi(buf + strlen(SAVE_FILE_CMD));   /* 提取编号 */
+            int req_id = atoi(buf + strlen(SAVE_FILE_CMD)); // 提取编号
             pthread_mutex_lock(&file_lock);
+
             if (req_id >= 0 && req_id < file_count) {
-                file_info_t *fi = &files[req_id];
+                file_info_t *fi = &files[req_id]; // 定位服务器文件信息表
                 FILE *fp = fopen(fi->filepath, "rb");
                 if (fp) {
+                    // 计算文件大小
                     fseek(fp, 0, SEEK_END);
                     long fsize = ftell(fp);
                     rewind(fp);
-                    /* 1) 先发回带头部的文件描述 */
+
+                    // 先发回带头部的文件描述
                     char header[256];
-                    snprintf(header, sizeof(header), SENDFILE_HDR"%s|%ld\n",
-                            fi->filename, fsize);
+                    snprintf(header, sizeof(header), SENDFILE_HDR"%s|%ld\n", fi->filename, fsize);
                     send(client->sockfd, header, strlen(header), 0);
-                    /* 2) 再分块回传文件体 */
+
+                    // 再分块回传文件体，1024字节一块
                     char sendbuf[1024];
                     size_t r;
                     while ((r = fread(sendbuf, 1, sizeof(sendbuf), fp)) > 0)
                         send(client->sockfd, sendbuf, r, 0);
                     fclose(fp);
-                    printf("[LOG] 已向 %s 发送文件 %s (编号 %d)\n",
-                        client->name, fi->filename, req_id);
+                    printf("[LOG] 已向 %s 发送文件 %s, 编号: %d)\n", client->name, fi->filename, req_id);
+                }else{
+                    printf("[LOG] 用户 %s 请求编号为 %d 的文件, 发生错误\n", client->name, req_id);
+                    const char *errbuf = "编号错误或文件不存在！\n";
+                    send(client->sockfd, errbuf, strlen(errbuf), 0);
                 }
+            }else{
+                printf("[LOG] 用户 %s 请求编号为 %d 的文件, 发生错误\n", client->name, req_id);
+                const char *errbuf = "编号错误或文件不存在！\n";
+                send(client->sockfd, errbuf, strlen(errbuf), 0);
             }
+
             pthread_mutex_unlock(&file_lock);
-            continue;                   /* 不向其他用户广播该命令 */
+            continue; // 跳过常规广播
         }
 
-        //文件处理
+        /* ---------- 上传文件请求 ----------*/
         if (strncmp(buf, "[FILE]", 6) == 0) {
+            // 解析文件名称和长度
             char filename[128];
             long filesize;
             sscanf(buf + 6, "%127[^|]|%ld", filename, &filesize);
@@ -143,20 +157,22 @@ void *handle_client(void *arg) {
             char filepath[256];
             pthread_mutex_lock(&file_lock);
             int fid = file_count++;
-            snprintf(filepath, sizeof(filepath), "%s/%d_%s", FILES_DIR, fid, filename);
+            // 更新文件地址为：文件保存目录/文件名_编号
+            snprintf(filepath, sizeof(filepath), "%s/%s_%d", FILES_DIR, filename, fid);
             pthread_mutex_unlock(&file_lock);
-        
+            
+            // 写文件
             FILE *fp = fopen(filepath, "wb");
             long received = 0;
             char filebuf[1024];
             ssize_t r;
-        
             while (received < filesize && (r = recv(client->sockfd, filebuf, sizeof(filebuf), 0)) > 0) {
                 fwrite(filebuf, 1, r, fp);
                 received += r;
             }
             fclose(fp);
-        
+            
+            // 更新文件列表
             pthread_mutex_lock(&file_lock);
             files[fid].fileid = fid;
             strcpy(files[fid].filename, filename);
@@ -165,10 +181,11 @@ void *handle_client(void *arg) {
             pthread_mutex_unlock(&file_lock);
         
             char announce[256];
-            snprintf(announce, sizeof(announce), "%s[FILE]%s %d\n", client->name, filename, fid);
+            snprintf(announce, sizeof(announce), "%s: [FILE]%s id: %d\n", client->name, filename, fid);
             broadcast_message(&ctx, announce);
-        
-            printf("[LOG] 已保存文件: %s, 来自用户: %s, 文件编号: %d\n", filename, client->name, fid);
+            printf("[LOG] 已保存来自用户 %s 的文件 %s id: %d\n", client->name, filename, fid);
+
+            continue; // 跳过常规广播
         }
         
         
@@ -178,15 +195,12 @@ void *handle_client(void *arg) {
         broadcast_message(&ctx, announce);
     }
 
-    // 注销并广播退出
+    /* ---------- 用户退出 ---------- */
     unregister_client(&ctx, client);
     num--;
-    snprintf(announce, sizeof announce,
-             "%s 离开了聊天室, 当前用户数: %d\n", client->name, num);
+    snprintf(announce, sizeof announce, "%s 离开了聊天室, 当前用户数: %d\n", client->name, num);
     broadcast_message(&ctx, announce);
-    printf("[LOG] 用户“%s”已退出, fd=%d, 当前用户数: %d\n",
-           client->name, client->sockfd, num);
-
+    printf("[LOG] 用户“%s”已退出, fd=%d, 当前用户数: %d\n", client->name, client->sockfd, num);
     close(client->sockfd);
     free(client);
     return NULL;
@@ -196,7 +210,7 @@ int main() {
     int conn_fd;
     struct sockaddr_in serv_addr;
 
-    // socket 初始化三件套
+    /* --------- Socket 初始化三件套 ---------- */
     if ((listen_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("socket");
         exit(EXIT_FAILURE);
@@ -218,29 +232,30 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    if (ensure_dir(FILES_DIR) != 0) { // 确保 files/ 存在 
+    // 确保 server_files/ 存在
+    if (ensure_dir(FILES_DIR) != 0) {
         perror("mkdir files");
         exit(EXIT_FAILURE);
     }
 
-    printf("聊天室服务器已启动，监听端口 %d \n",
-           SERVER_PORT);
+    printf("聊天室服务器已启动，监听端口 %d \n", SERVER_PORT);
 
     // 启动 stdin 监控线程
     pthread_t mon_tid;
     pthread_create(&mon_tid, NULL, stdin_monitor, NULL);
 
-    // 循环接入客户端
+    /* ---------- 处理新的接入请求 --------- */
     while (server_running) {
         conn_fd = accept(listen_fd, NULL, NULL);
         if (conn_fd < 0) {
-            if (!server_running) break;  // 收到关闭指令后跳出
+            if (!server_running) break; // 收到关闭指令后跳出
             perror("accept");
             continue;
         }
         client_t *new_client = malloc(sizeof(client_t));
         new_client->sockfd = conn_fd;
         printf("[LOG] 新的连接请求, fd=%d\n", conn_fd);
+        // 启动新的用户处理线程
         if (pthread_create(&new_client->tid, NULL,
                            handle_client, new_client)) {
             perror("pthread_create");

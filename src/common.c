@@ -63,6 +63,5 @@ int ensure_dir(const char *path)
     struct stat st;
     if (stat(path, &st) == 0 && S_ISDIR(st.st_mode))
         return 0; // 已存在目录
-    /* 0755: drwxr-xr-x */
-    return mkdir(path, 0755); // 仅创建最后一级；需要递归可自行改进
+    return mkdir(path, 0755); // 创建目录，权限755
 }
