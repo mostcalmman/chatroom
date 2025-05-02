@@ -8,6 +8,10 @@
 #define MAX_FILES       1000
 #define EXIT_CMD        "//exit"
 #define CLOSE_CMD       "//close"
+#define SEND_FILE_CMD   "//sendfile"
+#define SAVE_FILE_CMD   "//savefile"
+#define FILE_HDR        "[FILE]"        // 上传时附在文件头
+#define SENDFILE_HDR    "[SENDFILE]"    // 服务器回传文件数据的头
 
 // 单个客户端状态
 typedef struct {
@@ -37,3 +41,6 @@ int  register_client(server_ctx_t *ctx, client_t *c);
 void unregister_client(server_ctx_t *ctx, client_t *c);
 // 消息广播
 void broadcast_message(server_ctx_t *ctx, const char *msg);
+// 确保文件目录存在
+/* 工具：若目录不存在则递归创建，成功返回 0 */
+int ensure_dir(const char *path);

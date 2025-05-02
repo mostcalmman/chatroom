@@ -8,6 +8,7 @@
 file_info_t files[MAX_FILES];
 pthread_mutex_t file_lock = PTHREAD_MUTEX_INITIALIZER;
 int file_count = 0;
+static const char *FILES_DIR = "files"; // 所有上传文件统一保存处
 
 // 服务器上下文
 static server_ctx_t ctx = {
@@ -15,7 +16,7 @@ static server_ctx_t ctx = {
     .count   = 0,
     .lock    = PTHREAD_MUTEX_INITIALIZER // 静态初始化互斥锁
 };
-int num = 0;            // 直接维护一个在线人数计数, 避免频繁访问服务器上下文导致锁定与解锁
+int num = 0; // 直接维护一个在线人数计数, 避免频繁访问服务器上下文导致锁定与解锁
 static int listen_fd;
 static int server_running = 1; // 控制主循环，0 时退出
 
@@ -103,6 +104,36 @@ void *handle_client(void *arg) {
         ssize_t n = recv(client->sockfd, buf, MAX_MSG_LEN - 1, 0);
         if (n <= 0 || strcmp(buf, EXIT_CMD) == 0) break;
 
+        /* ---------- 客户端请求保存文件 ---------- */
+        if (strncmp(buf, SAVE_FILE_CMD, strlen(SAVE_FILE_CMD)) == 0) {
+            int req_id = atoi(buf + strlen(SAVE_FILE_CMD));   /* 提取编号 */
+            pthread_mutex_lock(&file_lock);
+            if (req_id >= 0 && req_id < file_count) {
+                file_info_t *fi = &files[req_id];
+                FILE *fp = fopen(fi->filepath, "rb");
+                if (fp) {
+                    fseek(fp, 0, SEEK_END);
+                    long fsize = ftell(fp);
+                    rewind(fp);
+                    /* 1) 先发回带头部的文件描述 */
+                    char header[256];
+                    snprintf(header, sizeof(header), SENDFILE_HDR"%s|%ld\n",
+                            fi->filename, fsize);
+                    send(client->sockfd, header, strlen(header), 0);
+                    /* 2) 再分块回传文件体 */
+                    char sendbuf[1024];
+                    size_t r;
+                    while ((r = fread(sendbuf, 1, sizeof(sendbuf), fp)) > 0)
+                        send(client->sockfd, sendbuf, r, 0);
+                    fclose(fp);
+                    printf("[LOG] 已向 %s 发送文件 %s (编号 %d)\n",
+                        client->name, fi->filename, req_id);
+                }
+            }
+            pthread_mutex_unlock(&file_lock);
+            continue;                   /* 不向其他用户广播该命令 */
+        }
+
         //文件处理
         if (strncmp(buf, "[FILE]", 6) == 0) {
             char filename[128];
@@ -112,7 +143,7 @@ void *handle_client(void *arg) {
             char filepath[256];
             pthread_mutex_lock(&file_lock);
             int fid = file_count++;
-            snprintf(filepath, sizeof(filepath), "files/%d_%s", fid, filename);
+            snprintf(filepath, sizeof(filepath), "%s/%d_%s", FILES_DIR, fid, filename);
             pthread_mutex_unlock(&file_lock);
         
             FILE *fp = fopen(filepath, "wb");
@@ -184,6 +215,11 @@ int main() {
     if (listen(listen_fd, MAX_CLIENTS) < 0) {
         perror("listen");
         close(listen_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    if (ensure_dir(FILES_DIR) != 0) { // 确保 files/ 存在 
+        perror("mkdir files");
         exit(EXIT_FAILURE);
     }
 

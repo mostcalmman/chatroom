@@ -1,4 +1,7 @@
 #include "common.h"
+#include <sys/stat.h>
+#include <sys/types.h>
+
 
 // 向所有在线客户端广播消息
 void broadcast_message(server_ctx_t *ctx, const char *msg) {
@@ -53,4 +56,13 @@ void unregister_client(server_ctx_t *ctx, client_t *c) {
     }
 
     pthread_mutex_unlock(&ctx->lock);
+}
+
+int ensure_dir(const char *path)
+{
+    struct stat st;
+    if (stat(path, &st) == 0 && S_ISDIR(st.st_mode))
+        return 0; // 已存在目录
+    /* 0755: drwxr-xr-x */
+    return mkdir(path, 0755); // 仅创建最后一级；需要递归可自行改进
 }

@@ -3,7 +3,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
+static const char *DL_DIR = "downloads";   /* 本地下载目录 */
 static int sockfd;  // 全局, 以便在 send 线程结束后关闭
 
 // 发送线程: 读取 stdin, 每行发送到服务器
@@ -11,6 +14,40 @@ void *send_handler(void *arg) {
     char buf[MAX_MSG_LEN];
     while (fgets(buf, sizeof(buf), stdin)) {
         buf[strcspn(buf, "\r\n")] = '\0';  // 去除换行
+        /* ---------- 处理 //sendfile ---------- */
+        if (strncmp(buf, SEND_FILE_CMD, strlen(SEND_FILE_CMD)) == 0) {
+            char *path = buf + strlen(SEND_FILE_CMD) + 1;   /* 跳过空格 */
+            FILE *fp = fopen(path, "rb");
+            if (!fp) {
+                fprintf(stderr, "无法打开文件 %s\n", path);
+                continue;
+            }
+            /* 获取纯文件名 */
+            char *filename = strrchr(path, '/');
+            filename = filename ? filename + 1 : path;
+
+            fseek(fp, 0, SEEK_END);
+            long fsize = ftell(fp);
+            rewind(fp);
+
+            /* 1) 发送文件头 */
+            char header[256];
+            snprintf(header, sizeof(header), FILE_HDR"%s|%ld", filename, fsize);
+            if (send(sockfd, header, strlen(header), 0) < 0) {
+                perror("send header");
+                fclose(fp);
+                break;
+            }
+            /* 2) 发送文件体 */
+            char chunk[1024];
+            size_t r;
+            while ((r = fread(chunk, 1, sizeof(chunk), fp)) > 0)
+                send(sockfd, chunk, r, 0);
+            fclose(fp);
+            printf("已发送文件 %s (%ld 字节)\n", filename, fsize);
+            continue;                   /* 不再走默认 send 路径 */
+        }
+
         if (send(sockfd, buf, strlen(buf), 0) < 0) {
             perror("send");
             break;
@@ -30,6 +67,41 @@ void *recv_handler(void *arg) {
     ssize_t n;
     while ((n = recv(sockfd, buf, sizeof(buf) - 1, 0)) > 0) {
         buf[n] = '\0';
+        /* ---------- 接收服务器回传的文件 ---------- */
+        if (strncmp(buf, SENDFILE_HDR, strlen(SENDFILE_HDR)) == 0) {
+            char filename[128];
+            long fsize;
+            /* 头格式: [SENDFILE]filename|size\n */
+            sscanf(buf + strlen(SENDFILE_HDR), "%127[^|]|%ld", filename, &fsize);
+
+            /* 确保下载目录存在 */
+            ensure_dir(DL_DIR);
+            char dlpath[256];
+            snprintf(dlpath, sizeof(dlpath), "%s/%s", DL_DIR, filename);
+            FILE *fp = fopen(dlpath, "wb");
+            if (!fp) {
+                fprintf(stderr, "无法保存文件到 %s\n", dlpath);
+                /* 丢弃文件体 */
+                char drop[1024];
+                long dropped = 0;
+                while (dropped < fsize)
+                    dropped += recv(sockfd, drop, sizeof(drop), 0);
+                continue;
+            }
+
+            long received = 0;
+            char filebuf[1024];
+            while (received < fsize) {
+                ssize_t r = recv(sockfd, filebuf, sizeof(filebuf), 0);
+                if (r <= 0) break;
+                fwrite(filebuf, 1, r, fp);
+                received += r;
+            }
+            fclose(fp);
+            printf("已保存文件 %s (%ld 字节)\n", dlpath, fsize);
+            continue;                   /* 文件处理完毕，等待下一条消息 */
+        }
+
         printf("%s", buf);
     }
     return NULL;
