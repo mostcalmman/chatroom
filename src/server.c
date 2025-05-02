@@ -275,6 +275,7 @@ int main() {
 
 
     printf("聊天室服务器已启动，监听端口 %d \n", SERVER_PORT);
+    printf("关闭服务器: //close\n");
 
     // 启动 stdin 监控线程
     pthread_t mon_tid;

@@ -187,6 +187,7 @@ int main(int argc, char *argv[]) {
         prompt_buf[n] = '\0';
         // 如果提示中包含“加入了聊天室”，说明注册成功，打印并跳出
         if (strstr(prompt_buf, "加入了聊天室")) {
+            printf("加入成功\n发送文件: //sendfile <filedir>\n保存文件: //savefile <fid>\n退出: //close");
             printf("%s", prompt_buf);
             break;
         }
