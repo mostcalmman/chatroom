@@ -71,36 +71,36 @@ void *recv_handler(void *arg) {
         buf[n] = '\0';
         /* ---------- 接收服务器回传的文件 ---------- */
         if (strncmp(buf, SENDFILE_HDR, strlen(SENDFILE_HDR)) == 0) {
-            /* 1) 解析头部 --------------------------------- */
+            // 解析头部
             char filename[128];
             long fsize;
 
-            /* 找到头部结尾的 \n，指向文件体起始位置 */
+            // 找到头部结尾的 \n，指向文件体起始位置
             char *header_end = strchr(buf, '\n');
             if (!header_end) continue;          // 防御：头部被截断
             *header_end = '\0';                 // 临时截断便于 sscanf
 
-            sscanf(buf + strlen(SENDFILE_HDR),
-                   "%127[^|]|%ld", filename, &fsize);
+            // 解析文件大小和名称
+            sscanf(buf + strlen(SENDFILE_HDR), "%127[^|]|%ld", filename, &fsize);
 
             char *body_ptr   = header_end + 1;  // 指向已到达的文件体
             size_t in_buf    = n - (body_ptr - buf);  // 这包里已有的字节数
 
-            /* 2) 准备保存文件 ----------------------------- */
+            /* --------- 保存文件体 ---------- */
             ensure_dir(DL_DIR);
             char dlpath[256];
             snprintf(dlpath, sizeof dlpath, "%s/%s", DL_DIR, filename);
             FILE *fp = fopen(dlpath, "wb");
             if (!fp) {
                 fprintf(stderr, "无法保存文件到 %s\n", dlpath);
-                /* 丢弃整个文件体 */
+                // 丢弃整个文件体
                 char drop[1024]; long dropped = 0;
                 while (dropped < fsize)
                     dropped += recv(sockfd, drop, sizeof drop, 0);
                 continue;
             }
 
-            /* 3) 先写首包里已包含的文件体 ----------------- */
+            // 先写首包里已包含的文件体
             long received = 0;
             if (in_buf > 0) {
                 size_t first = (in_buf > fsize) ? fsize : in_buf;
@@ -108,7 +108,7 @@ void *recv_handler(void *arg) {
                 received += first;
             }
 
-            /* 4) 继续按需读取直至收到 fsize 字节 ------------ */
+            // 继续按需读取直至收到 fsize 字节
             char filebuf[1024];
             while (received < fsize) {
                 size_t need = (fsize - received) < sizeof filebuf
@@ -121,9 +121,10 @@ void *recv_handler(void *arg) {
             }
             fclose(fp);
             printf("已保存文件 %s (%ld 字节)\n", dlpath, fsize);
-            continue;    // 文件处理完毕，回主循环
+            continue;    // 跳过打印广播消息
         }
 
+        // 打印广播消息
         printf("%s", buf);
     }
     return NULL;
